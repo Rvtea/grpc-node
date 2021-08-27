@@ -57,6 +57,7 @@ class TextFormatter {
   }
 
   getFullText() {
+    // console.log("[FILENAME]: ", this.textParts.join(''));
     return this.textParts.join('');
   }
 }
@@ -90,8 +91,30 @@ function getImportPath(to: Protobuf.Type | Protobuf.Enum | Protobuf.Service): st
   return stripLeadingPeriod(to.fullName).replace(/\./g, '/');
 }
 
+// const filePathMap = new Map<string, string>();
+// function getNewPath(to: Protobuf.Type | Protobuf.Enum | Protobuf.Service) {
+//   const pathInfo = stripLeadingPeriod(to.fullName).replace(/\./g, '/') + '.d.ts'; // before: + '.ts'
+//   console.log("[x] Path info: ", pathInfo);
+//   const baseFileName = path.basename(pathInfo);
+//   if(filePathMap.has(baseFileName.toLowerCase())) {
+//     // same name already exists
+//     // console.log("[x] to: ", to);
+//     console.log("[x] conflicted file name: ", pathInfo);
+//     const newPathInfo = pathInfo.replace(baseFileName, 'conflicted_' + baseFileName);
+//     console.log("[x] new file name: ", newPathInfo);
+//     return newPathInfo
+//   } else {
+//     filePathMap.set(baseFileName.toLowerCase(), pathInfo);
+//   }
+
+//   return pathInfo
+// }
+
 function getPath(to: Protobuf.Type | Protobuf.Enum | Protobuf.Service) {
-  return stripLeadingPeriod(to.fullName).replace(/\./g, '/') + '.ts';
+  const pathInfo = stripLeadingPeriod(to.fullName).replace(/\./g, '/') + '.d.ts'; // before: + '.ts'
+  console.log("[x] Path info: ", pathInfo);
+
+  return pathInfo;
 }
 
 function getPathToRoot(from: Protobuf.NamespaceBase) {
@@ -111,7 +134,10 @@ function getRelativeImportPath(from: Protobuf.Type | Protobuf.Service, to: Proto
 }
 
 function getTypeInterfaceName(type: Protobuf.Type | Protobuf.Enum | Protobuf.Service) {
-  return type.fullName.replace(/\./g, '_');
+  // console.log("[x] type.fullName: ", type.fullName);
+  // console.log("[x] replaced type.fullName: ", type.fullName.replace(/\./g, '_'));
+  const legacyResult = type.fullName.replace(/\./g, '_');
+  return omitProtoPrefixName(legacyResult);
 }
 
 function getImportLine(dependency: Protobuf.Type | Protobuf.Enum | Protobuf.Service, from?: Protobuf.Type | Protobuf.Service) {
@@ -132,7 +158,12 @@ function getImportLine(dependency: Protobuf.Type | Protobuf.Enum | Protobuf.Serv
     }
   } else {
     if (dependency instanceof Protobuf.Type) {
-      importedTypes = `${dependency.name} as ${typeInterfaceName}, ${dependency.name}__Output as ${typeInterfaceName}__Output`;
+      // importedTypes = `${dependency.name} as ${typeInterfaceName}, ${dependency.name}__Output as ${typeInterfaceName}__Output`;
+      if (typeInterfaceName === dependency.name) {
+        importedTypes = `${dependency.name}`;
+      } else {
+        importedTypes = `${dependency.name} as ${typeInterfaceName}`;
+      }
     } else if (dependency instanceof Protobuf.Enum) {
       importedTypes = `${dependency.name} as ${typeInterfaceName}`;
     } else if (dependency instanceof Protobuf.Service) {
@@ -141,6 +172,7 @@ function getImportLine(dependency: Protobuf.Type | Protobuf.Enum | Protobuf.Serv
       throw new Error('Invalid object passed to getImportLine');
     }
   }
+  console.log(`[debug] importedTypes: ${importedTypes}, filePath: ${filePath}`);
   return `import type { ${importedTypes} } from '${filePath}';`
 }
 
@@ -170,10 +202,33 @@ function formatComment(formatter: TextFormatter, comment?: string | null) {
 
 // GENERATOR FUNCTIONS
 
+/*
+  wtypesMap = {
+    "wtypes.String":                "string",
+    "wtypes.Bool":                  "bool",
+    "wtypes.Bytes":                 "bytes",
+    "wtypes.Double":                "double",
+    "wtypes.Float":                 "float",
+    "wtypes.Int32":                 "int32",
+    "wtypes.Int64":                 "int32",
+    "wtypes.StringSlice":           "repeated string",
+    "wtypes.StringMap":             "map<string,string>",
+    "wtypes.CustomizedMetadataMap": "map<string,string>",
+    "wtypes.Int64Slice":            "repeated int32",
+    "wtypes.UInt64":                "uint32",
+    "wtypes.UInt32":                "uint32",
+    "wtypes.Time":                  "string",
+    " int64 ":                      " int32 ",
+  }
+*/
+
 function getTypeNamePermissive(fieldType: string, resolvedType: Protobuf.Type | Protobuf.Enum | null, repeated: boolean, map: boolean): string {
+  // console.log("[x] fieldType is: ", fieldType);
   switch (fieldType) {
     case 'double':
     case 'float':
+    case 'wtypes.Double':
+    case 'wtypes.Float':
       return 'number | string';
     case 'int32':
     case 'uint32':
@@ -186,13 +241,29 @@ function getTypeNamePermissive(fieldType: string, resolvedType: Protobuf.Type | 
     case 'sint64':
     case 'fixed64':
     case 'sfixed64':
-      return 'number | string | Long';
+    case 'wtypes.Int32':
+    case 'wtypes.Int64':
+    case 'wtypes.UInt32':
+    case 'wtypes.UInt64':
+      return 'number'; // before: 'number | string | Long';
     case 'bool':
+    case 'wtypes.Bool':
       return 'boolean';
     case 'string':
+    case 'wtypes.String':
       return 'string';
     case 'bytes':
+    case 'wtypes.Bytes':
       return 'Buffer | Uint8Array | string';
+    case 'wtypes.Time':
+      return 'string';
+    case 'wtypes.StringSlice':
+      return 'string[]';
+    case 'wtypes.Int64Slice':
+      return 'number[]';
+    case 'wtypes.StringMap':
+    case 'wtypes.CustomizedMetadataMap':
+      return `[key: string]: string`;
     default:
       if (resolvedType === null) {
         throw new Error('Found field with no usable type');
@@ -220,6 +291,16 @@ function getFieldTypePermissive(field: Protobuf.FieldBase): string {
   }
 }
 
+function omitProtoPrefixName(nameOverride: string, prefixPattern: string = '_proto_'): string {
+  let newNameOverride = nameOverride;
+  if (nameOverride && nameOverride.indexOf(prefixPattern) > -1) {
+    const idx = nameOverride.indexOf(prefixPattern);
+    newNameOverride = nameOverride.slice(idx + prefixPattern.length);
+  }
+  // console.log("[x] new override: ", newNameOverride);
+  return newNameOverride;
+}
+
 function generatePermissiveMessageInterface(formatter: TextFormatter, messageType: Protobuf.Type, options: GeneratorOptions, nameOverride?: string) {
   if (options.includeComments) {
     formatComment(formatter, messageType.comment);
@@ -233,7 +314,8 @@ function generatePermissiveMessageInterface(formatter: TextFormatter, messageTyp
     formatter.writeLine('}');
     return;
   }
-  formatter.writeLine(`export interface ${nameOverride ?? messageType.name} {`);
+  console.log(`[x] message.name: ${messageType.name}: nameOverride: ${nameOverride}`);
+  formatter.writeLine(`export interface ${nameOverride ? omitProtoPrefixName(nameOverride) : messageType.name} {`);
   formatter.indent();
   for (const field of messageType.fieldsArray) {
     const repeatedString = field.repeated ? '[]' : '';
@@ -254,6 +336,7 @@ function generatePermissiveMessageInterface(formatter: TextFormatter, messageTyp
   formatter.writeLine('}');
 }
 
+// no need for @fw-types
 function getTypeNameRestricted(fieldType: string, resolvedType: Protobuf.Type | Protobuf.Enum | null, repeated: boolean, map: boolean, options: GeneratorOptions): string {
   switch (fieldType) {
     case 'double':
@@ -316,6 +399,7 @@ function getTypeNameRestricted(fieldType: string, resolvedType: Protobuf.Type | 
   }
 }
 
+// no need for @fw-types
 function getFieldTypeRestricted(field: Protobuf.FieldBase, options: GeneratorOptions): string {
   const valueType = getTypeNameRestricted(field.type, field.resolvedType, field.repeated, field.map, options);
   if (field instanceof Protobuf.MapField) {
@@ -326,6 +410,7 @@ function getFieldTypeRestricted(field: Protobuf.FieldBase, options: GeneratorOpt
   }
 }
 
+// no need for @fw-types
 function generateRestrictedMessageInterface(formatter: TextFormatter, messageType: Protobuf.Type, options: GeneratorOptions, nameOverride?: string) {
   if (options.includeComments) {
     formatComment(formatter, messageType.comment);
@@ -413,7 +498,7 @@ function generateMessageInterfaces(formatter: TextFormatter, messageType: Protob
     }
   }
   if (usesLong) {
-    formatter.writeLine("import type { Long } from '@grpc/proto-loader';");
+    // formatter.writeLine("import type { Long } from '@grpc/proto-loader';");
   }
   if (messageType.fullName === '.google.protobuf.Any') {
     formatter.writeLine("import type { AnyExtension } from '@grpc/proto-loader';")
@@ -423,8 +508,8 @@ function generateMessageInterfaces(formatter: TextFormatter, messageType: Protob
     const nameOverride = getTypeInterfaceName(childType);
     if (childType instanceof Protobuf.Type) {
       generatePermissiveMessageInterface(formatter, childType, options, nameOverride);
-      formatter.writeLine('');
-      generateRestrictedMessageInterface(formatter, childType, options, nameOverride);
+      // formatter.writeLine('');
+      // generateRestrictedMessageInterface(formatter, childType, options, nameOverride);
     } else {
       generateEnumInterface(formatter, childType, options, nameOverride);
     }
@@ -432,8 +517,8 @@ function generateMessageInterfaces(formatter: TextFormatter, messageType: Protob
   }
 
   generatePermissiveMessageInterface(formatter, messageType, options);
-  formatter.writeLine('');
-  generateRestrictedMessageInterface(formatter, messageType, options);
+  // formatter.writeLine('');
+  // generateRestrictedMessageInterface(formatter, messageType, options);
 }
 
 function generateEnumInterface(formatter: TextFormatter, enumType: Protobuf.Enum, options: GeneratorOptions, nameOverride?: string) {
@@ -454,6 +539,7 @@ function generateEnumInterface(formatter: TextFormatter, enumType: Protobuf.Enum
   formatter.writeLine('}');
 }
 
+// no need for @fw-types
 function generateServiceClientInterface(formatter: TextFormatter, serviceType: Protobuf.Service, options: GeneratorOptions) {
   if (options.includeComments) {
     formatComment(formatter, serviceType.comment);
@@ -505,6 +591,7 @@ function generateServiceClientInterface(formatter: TextFormatter, serviceType: P
   formatter.writeLine('}');
 }
 
+// no need for @fw-types
 function generateServiceHandlerInterface(formatter: TextFormatter, serviceType: Protobuf.Service, options: GeneratorOptions) {
   if (options.includeComments) {
     formatComment(formatter, serviceType.comment);
@@ -541,6 +628,7 @@ function generateServiceHandlerInterface(formatter: TextFormatter, serviceType: 
   formatter.writeLine('}');
 }
 
+// no need for @fw-types
 function generateServiceDefinitionInterface(formatter: TextFormatter, serviceType: Protobuf.Service) {
   formatter.writeLine(`export interface ${serviceType.name}Definition extends grpc.ServiceDefinition {`);
   formatter.indent();
@@ -554,6 +642,7 @@ function generateServiceDefinitionInterface(formatter: TextFormatter, serviceTyp
   formatter.writeLine('}')
 }
 
+// no need for @fw-types
 function generateServiceInterfaces(formatter: TextFormatter, serviceType: Protobuf.Service, options: GeneratorOptions) {
   formatter.writeLine(`// Original file: ${serviceType.filename}`);
   formatter.writeLine('');
@@ -643,6 +732,7 @@ function generateLoadedDefinitionTypes(formatter: TextFormatter, namespace: Prot
   formatter.writeLine('}');
 }
 
+// no need for @fw-types
 function generateRootFile(formatter: TextFormatter, root: Protobuf.Root, options: GeneratorOptions) {
   formatter.writeLine(`import type * as grpc from '${options.grpcLib}';`);
   generateDefinitionImports(formatter, root, options);
@@ -678,21 +768,21 @@ function generateFilesForNamespace(namespace: Protobuf.NamespaceBase, options: G
     if (nested instanceof Protobuf.Type) {
       generateMessageInterfaces(fileFormatter, nested, options);
       if (options.verbose) {
-        console.log(`Writing ${options.outDir}/${getPath(nested)} from file ${nested.filename}`);
+        console.log(`[Type] Writing ${options.outDir}/${getPath(nested)} from file ${nested.filename}`);
       }
       filePromises.push(writeFile(`${options.outDir}/${getPath(nested)}`, fileFormatter.getFullText()));
     } else if (nested instanceof Protobuf.Enum) {
       generateEnumInterface(fileFormatter, nested, options);
       if (options.verbose) {
-        console.log(`Writing ${options.outDir}/${getPath(nested)} from file ${nested.filename}`);
+        console.log(`[Enum] Writing ${options.outDir}/${getPath(nested)} from file ${nested.filename}`);
       }
       filePromises.push(writeFile(`${options.outDir}/${getPath(nested)}`, fileFormatter.getFullText()));
     } else if (nested instanceof Protobuf.Service) {
-      generateServiceInterfaces(fileFormatter, nested, options);
-      if (options.verbose) {
-        console.log(`Writing ${options.outDir}/${getPath(nested)} from file ${nested.filename}`);
-      }
-      filePromises.push(writeFile(`${options.outDir}/${getPath(nested)}`, fileFormatter.getFullText()));
+      // generateServiceInterfaces(fileFormatter, nested, options);
+      // if (options.verbose) {
+      //   console.log(`[Service] Writing ${options.outDir}/${getPath(nested)} from file ${nested.filename}`);
+      // }
+      // filePromises.push(writeFile(`${options.outDir}/${getPath(nested)}`, fileFormatter.getFullText()));
     } else if (isNamespaceBase(nested)) {
       filePromises.push(...generateFilesForNamespace(nested, options));
     }
@@ -704,11 +794,11 @@ function writeFilesForRoot(root: Protobuf.Root, masterFileName: string, options:
   const filePromises: Promise<void>[] = [];
 
   const masterFileFormatter = new TextFormatter();
-  generateRootFile(masterFileFormatter, root, options);
-  if (options.verbose) {
-    console.log(`Writing ${options.outDir}/${masterFileName}`);
-  }
-  filePromises.push(writeFile(`${options.outDir}/${masterFileName}`, masterFileFormatter.getFullText()));
+  // generateRootFile(masterFileFormatter, root, options);
+  // if (options.verbose) {
+  //   console.log(`Writing ${options.outDir}/${masterFileName}`);
+  // }
+  // filePromises.push(writeFile(`${options.outDir}/${masterFileName}`, masterFileFormatter.getFullText()));
 
   filePromises.push(...generateFilesForNamespace(root, options));
 
@@ -720,6 +810,8 @@ async function writeAllFiles(protoFiles: string[], options: GeneratorOptions) {
   const basenameMap = new Map<string, string[]>();
   for (const filename of protoFiles) {
     const basename = path.basename(filename).replace(/\.proto$/, '.ts');
+    console.log("[x] basename: ", basename);
+    console.log("[x] filename: ", filename);
     if (basenameMap.has(basename)) {
       basenameMap.get(basename)!.push(filename);
     } else {
@@ -728,6 +820,7 @@ async function writeAllFiles(protoFiles: string[], options: GeneratorOptions) {
   }
   for (const [basename, filenames] of basenameMap.entries()) {
     const loadedRoot = await loadProtosWithOptions(filenames, options);
+    // console.log("[debug] loaded root: ", loadedRoot);
     writeFilesForRoot(loadedRoot, basename, options);
   }
 }
